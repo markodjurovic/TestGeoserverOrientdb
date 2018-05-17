@@ -6,24 +6,29 @@
 package com.markodjurovic.testgeoserver;
 
 import com.orientechnologies.orient.jdbc.OrientJdbcConnection;
-import sun.net.www.protocol.http.HttpURLConnection;
 import java.io.BufferedReader;
-import java.io.DataOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.net.URL;
-import java.net.URLEncoder;
+import java.io.StringReader;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.HttpClientBuilder;
+import org.w3c.dom.Document;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
 /**
  * Idea is to insert some data into orientDB and to execute some queries via
@@ -96,40 +101,26 @@ public class MainClass {
 "  </wfs:Query>\n" +
 "</wfs:GetFeature>";
   
-  //this one should return same result as intersect
-  private static final String notDisjointBody = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-"<!--\n" +
-"    This example demonstrates a WFS 2.0 GetFeature POST request.\n" +
-"\n" +
-"    WFS 2.0 does not depend on any one GML version and thus\n" +
-"    requires an explicit namespace and schemaLocation for GML.\n" +
-"\n" +
-"    This spatial filter selects a single feature with\n" +
-"    gml:id=\"bugsites.2\".\n" +
-"\n" +
-"    See also:\n" +
-"    WFS Standard: http://www.opengeospatial.org/standards/wfs\n" +
-"    Filter Encoding Standard: http://www.opengeospatial.org/standards/filter\n" +
-"-->\n" +
-"<wfs:GetFeature service=\"WFS\" version=\"2.0.0\"\n" +
-"    xmlns:wfs=\"http://www.opengis.net/wfs/2.0\" xmlns:fes=\"http://www.opengis.net/fes/2.0\"\n" +
-"    xmlns:gml=\"http://www.opengis.net/gml/3.2\" xmlns:sf=\"http://www.openplans.org/spearfish\"\n" +
-"    xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n" +
-"    xsi:schemaLocation=\"http://www.opengis.net/wfs/2.0 http://schemas.opengis.net/wfs/2.0/wfs.xsd\n" +
-"        http://www.opengis.net/gml/3.2 http://schemas.opengis.net/gml/3.2.1/gml.xsd\">\n" +
-"    <wfs:Query typeNames=\"test:Restaurant\">\n" +
-"        <fes:Filter>\n" +
-"            <fes:Not>\n" +
-"                <fes:Disjoint>\n" +
-"                    <fes:ValueReference>sf:the_geom</fes:ValueReference>\n" +
-"                    <!-- gml:id is mandatory on GML 3.2 geometry elements -->\n" +
-"                    <gml:Point gml:id=\"p21\" srsName=\"http://www.opengis.net/def/crs/EPSG/0/4326\">\n" +
-"                       <gml:coordinates>20, 20</gml:coordinates>\n" +
-"                    </gml:Point>\n" +
-"                </fes:Disjoint>\n" +
-"            </fes:Not>\n" +
-"        </fes:Filter>\n" +
-"    </wfs:Query>\n" +
+  //this one should return oposite result than intersects
+  private static final String disjointBody = "<wfs:GetFeature service=\"WFS\" version=\"1.0.0\"\n" +
+"  outputFormat=\"GML2\"\n" +
+"  xmlns:topp=\"http://www.openplans.org/topp\"\n" +
+"  xmlns:wfs=\"http://www.opengis.net/wfs\"\n" +
+"  xmlns:ogc=\"http://www.opengis.net/ogc\"\n" +
+"  xmlns:gml=\"http://www.opengis.net/gml\"\n" +
+"  xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n" +
+"  xsi:schemaLocation=\"http://www.opengis.net/wfs\n" +
+"                      http://schemas.opengis.net/wfs/1.0.0/WFS-basic.xsd\">\n" +
+"   <wfs:Query typeName=\"test:Restaurant\">\n" +
+"      <ogc:Filter>\n" +
+"   		<ogc:Disjoint>\n" +
+"      		<ogc:PropertyName>location</ogc:PropertyName>\n" +
+"      		<gml:Point srsName=\"http://www.opengis.net/gml/srs/epsg.xml#4326\">\n" +
+"        		<gml:coordinates>20,20</gml:coordinates>\n" +
+"      		</gml:Point>\n" +
+"   		</ogc:Disjoint>\n" +
+"	  </ogc:Filter>\n" +
+"   </wfs:Query>\n" +
 "</wfs:GetFeature>";
 
   public static void main(String[] args) {
@@ -157,13 +148,26 @@ public class MainClass {
     
     //execute bounding box filter
     try{
+      DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+      DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();      
+      
       String response = sendPost(geoServerUrl, bboxBody);
-      //parse response and check if result is valid
+      InputSource is = new InputSource(new StringReader(response));
+      Document doc = dBuilder.parse(is);
+      Node rootNode = doc.getChildNodes().item(0);
+      NodeList firstLevelChildNodes = rootNode.getChildNodes();
+      List features = new ArrayList();
+      for (int i = 0; i < firstLevelChildNodes.getLength(); i++){
+        Node childNode = firstLevelChildNodes.item(i);
+        if (childNode.getNodeName().equals("gml:featureMember")){
+          features.add(childNode);
+        }
+      }
       
       response = sendPost(geoServerUrl, intersectsBody);
       //parse response and check if result  is valid
       
-      response = sendPost(geoServerUrl, notDisjointBody);
+      response = sendPost(geoServerUrl, disjointBody);
       //parse response and check if result  is valid
     }
     catch (Exception e){
