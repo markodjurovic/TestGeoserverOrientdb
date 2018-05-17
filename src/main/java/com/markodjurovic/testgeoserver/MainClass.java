@@ -15,8 +15,11 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.apache.http.HttpEntity;
@@ -38,7 +41,9 @@ import org.xml.sax.InputSource;
  */
 public class MainClass {
 
-  private final static String USER_AGENT = "TestApp";
+//  private final static String USER_AGENT = "TestApp";
+  
+  private static final Set<String> geometryNodesNames = new HashSet<>(Arrays.asList("gml:Point", "gml:LineString"));
   
   private static final String bboxBody = "<!-- Performs a get feature with a bounding box filter.      -->\n"
           + "<!-- The BBOX filter is a convenience for a <Not><Disjoint>, -->\n"
@@ -92,7 +97,7 @@ public class MainClass {
 "  <wfs:Query typeName=\"test:Restaurant\">\n" +
 "    <Filter>\n" +
 "      <Intersects>\n" +
-"        <PropertyName>the_geom</PropertyName>\n" +
+"        <PropertyName>location</PropertyName>\n" +
 "          <gml:Point srsName=\"http://www.opengis.net/gml/srs/epsg.xml#4326\">\n" +
 "            <gml:coordinates>20,20</gml:coordinates>\n" +
 "          </gml:Point>\n" +
@@ -126,27 +131,36 @@ public class MainClass {
   public static void main(String[] args) {
     String storageClassName = "Restaurant";
     String fieldName = "location";
-    String database = "demodb";
+    String database = args[0];
     Properties info = new Properties();
     info.put("user", "admin");
     info.put("password", "admin");
     String geoServerUrl = "http://localhost:8080/geoserver";
     geoServerUrl = "http://localhost:8080/geoserver/wfs";
 
+//    OrientDB orient = new OrientDB("remote:localhost", "root", "000000", OrientDBConfig.defaultConfig());
+//    orient.createIfNotExists(database, ODatabaseType.PLOCAL);
+//    ODatabaseSession db = orient.open(database, "admin", "admin");
+//    OClass storageClass = db.createClassIfNotExist(storageClassName);    
+//    if (storageClass.getProperty(fieldName) != null)
+//      storageClass.dropProperty(fieldName);
+    
     try {
+            
       Connection conn = (OrientJdbcConnection) DriverManager.getConnection("jdbc:orient:remote:localhost/" + database, info);
       Statement statement = conn.createStatement();
+//      statement.execute("CREATE PROPERTY " + storageClassName + "." + fieldName + " EMBEDDED OGeometry");
+//      statement.execute("CREATE INDEX " + fieldName + ".index ON " + storageClassName + "(" + fieldName + ") SPATIAL ENGINE LUCENE");
       statement.executeUpdate("INSERT INTO " + storageClassName + "(" + fieldName + ") VALUES (St_GeomFromText(\"LINESTRING (30 10, 10 30, 40 40)\"))");
       statement.executeUpdate("INSERT INTO " + storageClassName + "(" + fieldName + ") VALUES (St_GeomFromText(\"GEOMETRYCOLLECTION(POINT(15 15),LINESTRING(16 16,3 15))\"))");
-      statement.executeUpdate("INSERT INTO " + storageClassName + "(" + fieldName + ") VALUES (St_GeomFromText(\"POINT (12.4684635 41.8914114)\"))");
+      statement.executeUpdate("INSERT INTO " + storageClassName + "(" + fieldName + ") VALUES (St_GeomFromText(\"POINT (12 41)\"))");
       statement.close();
       conn.close();
     } catch (SQLException exc) {
       exc.printStackTrace();
       return;
     }
-    
-    //execute bounding box filter
+        
     try{
       DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
       DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();      
@@ -155,25 +169,65 @@ public class MainClass {
       InputSource is = new InputSource(new StringReader(response));
       Document doc = dBuilder.parse(is);
       Node rootNode = doc.getChildNodes().item(0);
-      NodeList firstLevelChildNodes = rootNode.getChildNodes();
-      List features = new ArrayList();
-      for (int i = 0; i < firstLevelChildNodes.getLength(); i++){
-        Node childNode = firstLevelChildNodes.item(i);
-        if (childNode.getNodeName().equals("gml:featureMember")){
-          features.add(childNode);
-        }
+      List<Node> nodes = getGeometryNodes(rootNode);
+      List<TypeCoordinates> typeCoordinates = getTypeAndCoordinatesFromGeomNodes(nodes);
+      int numOfLines = getNoOfType(typeCoordinates, Type.LINE);
+      if (numOfLines != 2){
+        System.err.println("Invalid num of lines for bounding box check");
+      }
+      int numOfPoints = getNoOfType(typeCoordinates, Type.POINT);
+      if (numOfPoints != 2){
+        System.err.println("Invalid num of points for bounding box check");
       }
       
       response = sendPost(geoServerUrl, intersectsBody);
-      //parse response and check if result  is valid
+      doc = dBuilder.parse(new InputSource(new StringReader(response)));
+      rootNode = doc.getChildNodes().item(0);
+      nodes = getGeometryNodes(rootNode);
+      typeCoordinates = getTypeAndCoordinatesFromGeomNodes(nodes);
+      numOfLines = getNoOfType(typeCoordinates, Type.LINE);
+      if (numOfLines != 1){
+        System.err.println("Invalid num of lines for intersects check");
+      }
+      numOfPoints = getNoOfType(typeCoordinates, Type.POINT);
+      if (numOfPoints != 0){
+        System.err.println("Invalid num of points for intersects check");
+      }
       
       response = sendPost(geoServerUrl, disjointBody);
-      //parse response and check if result  is valid
+      doc = dBuilder.parse(new InputSource(new StringReader(response)));
+      rootNode = doc.getChildNodes().item(0);
+      nodes = getGeometryNodes(rootNode);
+      typeCoordinates = getTypeAndCoordinatesFromGeomNodes(nodes);
+      numOfLines = getNoOfType(typeCoordinates, Type.LINE);
+      if (numOfLines != 1){
+        System.err.println("Invalid num of lines for disjoint check");
+      }
+      numOfPoints = getNoOfType(typeCoordinates, Type.POINT);
+      if (numOfPoints != 2){
+        System.err.println("Invalid num of points for disjoint check");
+      }
     }
     catch (Exception e){
       e.printStackTrace();
       return;
     }
+    
+    System.out.println("Everything is OK");
+    
+//    try{
+//      Connection conn = (OrientJdbcConnection) DriverManager.getConnection("jdbc:orient:remote:localhost/" + database, info);
+//      Statement statement = conn.createStatement();
+//      statement.executeUpdate("DELETE FROM " + storageClassName);
+//      
+//      statement.close();
+//      conn.close();
+//    }
+//    catch (SQLException exc){
+//      exc.printStackTrace();
+//    }
+    
+//    orient.drop(database);
   }
 
   private static String sendPost(String url, String postData) throws Exception {   
@@ -196,5 +250,108 @@ public class MainClass {
     }
     return null;
   }
+  
+  //valid only for test
+  private static List<Node> getGeometryNodes(Node rootNode){
+    List<Node> retList = new ArrayList<>();
+    NodeList childNodes = rootNode.getChildNodes();
+    if (childNodes == null){
+      return retList;
+    }
+    for (int i = 0; i < childNodes.getLength(); i++){
+      Node childNode = childNodes.item(i);
+      if (isGeomNode(childNode)){
+        retList.add(childNode);
+      }
+      else{
+        retList.addAll(getGeometryNodes(childNode));
+      }
+    }
+    return retList;
+  }
 
+  private static boolean isGeomNode(Node node) {
+    String nodeName = node.getNodeName();
+    return geometryNodesNames.contains(nodeName);
+  }
+
+  private static void fillCoordinates(TypeCoordinates retVal, Node valueNode) {
+    if (valueNode.getNodeType() == Node.ELEMENT_NODE){      
+      String coords = valueNode.getTextContent();
+      String[] tokens = coords.split(",| ");
+      for (String token : tokens){
+        double val = Double.parseDouble(token);
+        retVal.addCoordinate(val);
+      }
+    }
+    return;
+  }
+  
+  enum Type{
+    UNDEFINIED,
+    POINT,
+    LINE
+  }
+  
+  private static class TypeCoordinates{
+    Type type;
+    List<Double> coordinates = new ArrayList<>();
+    
+    void addCoordinate(double coord){
+      coordinates.add(coord);
+    }
+  }
+  
+  static List<TypeCoordinates> getTypeAndCoordinatesFromGeomNodes(List<Node> geomNodes){
+    List<TypeCoordinates> retVal = new ArrayList<>();
+    for (Node node : geomNodes){
+      TypeCoordinates tco = getTypeAndCoordinatesFromGeomNode(node);
+      retVal.add(tco);
+    }
+    
+    return retVal;
+  }
+  
+  static TypeCoordinates getTypeAndCoordinatesFromGeomNode(Node geomNode){
+    TypeCoordinates retVal = new TypeCoordinates();
+    
+    String name = geomNode.getNodeName();
+    Type type = getTypeFromName(name);
+    
+    retVal.type = type;
+    
+    NodeList children = geomNode.getChildNodes();
+    for (int i = 0; i < children.getLength(); i++){
+      Node child = children.item(i);
+      if (child.getNodeName().equals("gml:coordinates")){
+        fillCoordinates(retVal, child);
+        return retVal;
+      }
+    }
+    
+    return null;
+  }
+
+  static Type getTypeFromName(String name){
+    switch (name){
+      case "gml:LineString":
+        return Type.LINE;
+      case "gml:Point":
+        return Type.POINT;
+      default:
+        return Type.UNDEFINIED;
+    }
+  }
+  
+  static int getNoOfType(List<TypeCoordinates> typesCoordinates, Type wantedType){
+    int counter = 0;
+    counter = typesCoordinates.stream().mapToInt((TypeCoordinates value) -> {
+      if (value.type == wantedType)
+        return 1;
+      else
+        return 0;      
+    }).reduce(0, (int left, int right) -> left + right);
+    return counter;
+  }
+  
 }
