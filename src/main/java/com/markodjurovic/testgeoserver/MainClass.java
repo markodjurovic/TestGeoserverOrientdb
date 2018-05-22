@@ -127,6 +127,31 @@ public class MainClass {
 "	  </ogc:Filter>\n" +
 "   </wfs:Query>\n" +
 "</wfs:GetFeature>";
+  
+  private static final String overlapsBody = "<wfs:GetFeature service=\"WFS\" version=\"1.0.0\"\n" +
+"  outputFormat=\"GML2\"\n" +
+"  xmlns:topp=\"http://www.openplans.org/topp\"\n" +
+"  xmlns:wfs=\"http://www.opengis.net/wfs\"\n" +
+"  xmlns:ogc=\"http://www.opengis.net/ogc\"\n" +
+"  xmlns:gml=\"http://www.opengis.net/gml\"\n" +
+"  xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n" +
+"  xsi:schemaLocation=\"http://www.opengis.net/wfs\n" +
+"                      http://schemas.opengis.net/wfs/1.0.0/WFS-basic.xsd\">\n" +
+"   <wfs:Query typeName=\"test:Restaurant\">\n" +
+"      <ogc:Filter>\n" +
+"        <Overlaps>\n" +
+"          <ogc:PropertyName>location</ogc:PropertyName>\n" +
+"            <gml:Polygon>\n" +
+"              <gml:outerBoundaryIs>\n" +
+"                <gml:LinearRing>\n" +
+"                  <gml:coordinates>-70,-40 -70,40 20,40 20,-40 -70,-40</gml:coordinates>\n" +
+"                </gml:LinearRing>\n" +
+"              </gml:outerBoundaryIs>\n" +
+"            </gml:Polygon>\n" +
+"        </Overlaps>\n" +
+"      </ogc:Filter>\n" +
+"   </wfs:Query>\n" +
+"</wfs:GetFeature>";
 
   public static void main(String[] args) {
     String storageClassName = "Restaurant";
@@ -205,6 +230,20 @@ public class MainClass {
       }
       numOfPoints = getNoOfType(typeCoordinates, Type.POINT);
       if (numOfPoints != 2){
+        System.err.println("Invalid num of points for disjoint check");
+      }
+      
+      response = sendPost(geoServerUrl, overlapsBody);
+      doc = dBuilder.parse(new InputSource(new StringReader(response)));
+      rootNode = doc.getChildNodes().item(0);
+      nodes = getGeometryNodes(rootNode);
+      typeCoordinates = getTypeAndCoordinatesFromGeomNodes(nodes);
+      numOfLines = getNoOfType(typeCoordinates, Type.LINE);
+      if (numOfLines != 1){
+        System.err.println("Invalid num of lines for disjoint check");
+      }
+      numOfPoints = getNoOfType(typeCoordinates, Type.POINT);
+      if (numOfPoints != 0){
         System.err.println("Invalid num of points for disjoint check");
       }
     }
